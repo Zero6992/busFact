@@ -77,7 +77,12 @@ def step2_fye_api(df1: pd.DataFrame, ua: str, rate: float) -> Tuple[pd.DataFrame
     df["fyear"] = pd.to_numeric(df["fyear"], errors="coerce").astype("Int64")
     fye_tbl["fyear"] = pd.to_numeric(fye_tbl["fyear"], errors="coerce").astype("Int64")
     fye_tbl = fye_tbl.rename(columns={"fye_month_api": "_fye_month_api"})
-    df = df.merge(fye_tbl[["cik10", "fyear", "_fye_month_api"]], on=["cik10", "fyear"], how="left")
+    fye_tbl["_fye_date_api"] = pd.to_datetime(fye_tbl["fye_date"], errors="coerce").dt.normalize()
+    df = df.merge(
+        fye_tbl[["cik10", "fyear", "_fye_month_api", "_fye_date_api"]],
+        on=["cik10", "fyear"],
+        how="left",
+    )
     df.drop(columns=["cik10"], inplace=True, errors="ignore")
     return df, fye_tbl
 
@@ -86,16 +91,29 @@ def step3_html_parse(df2: pd.DataFrame, ua: str, rate: float, no_progress: bool=
     df = df2.copy()
     url_col = detect_url_column(df)
     headers = {"User-Agent": ua, "Accept-Encoding":"gzip, deflate", "Connection":"keep-alive"}
-    need = df["quarter"].isna()
-    idxs = df.index[need].tolist()
-    use_bar = (not no_progress) and (tqdm is not None)
-    it = tqdm(idxs, desc="HTML probe (DEI → period & FYE)", unit="row") if use_bar else idxs
-
     # 欄位初始化
     if "_period_end_date_html" not in df.columns:
         df["_period_end_date_html"] = pd.NaT
     if "_fye_month_html" not in df.columns:
         df["_fye_month_html"] = pd.NA
+
+    quarter_missing = df["quarter"].isna() if "quarter" in df.columns else pd.Series(True, index=df.index, dtype=bool)
+    if "_period_end_date_sub" in df.columns:
+        period_missing = df["_period_end_date_sub"].isna() & df["_period_end_date_html"].isna()
+    else:
+        period_missing = df["_period_end_date_html"].isna()
+
+    # 需要補抓 HTML 的情境：缺季、缺期末日、或 API 也沒給 FYE 月
+    html_fye_missing = df["_fye_month_html"].isna()
+    if "_fye_month_api" in df.columns:
+        api_fye_missing = df["_fye_month_api"].isna()
+    else:
+        api_fye_missing = pd.Series(True, index=df.index, dtype=bool)
+    fye_missing = html_fye_missing & api_fye_missing
+
+    idxs = df.index[(quarter_missing | period_missing | fye_missing)].tolist()
+    use_bar = (not no_progress) and (tqdm is not None)
+    it = tqdm(idxs, desc="HTML probe (DEI → period & FYE)", unit="row") if use_bar else idxs
 
     for i in it:
         url = canon_url(df.at[i, url_col]) if url_col in df.columns else None
@@ -103,6 +121,8 @@ def step3_html_parse(df2: pd.DataFrame, ua: str, rate: float, no_progress: bool=
             continue
 
         # 取 HTML 原文一次，避免重覆抓
+        pm: Optional[int] = None
+        text_cache: Optional[str] = None
         html, _ = fetch_text(url, headers)
 
         # ---------- P0: Inline XBRL DEI（最高優先） ----------
@@ -110,10 +130,9 @@ def step3_html_parse(df2: pd.DataFrame, ua: str, rate: float, no_progress: bool=
             dei = extract_dei_from_html(html)
             # period_end（若有）
             if isinstance(dei.get("period_end"), pd.Timestamp) and pd.notna(dei["period_end"]):
-                df.at[i, "_period_end_date_html"] = pd.to_datetime(dei["period_end"]).normalize()
-                pm = int(pd.to_datetime(dei["period_end"]).month)
-            else:
-                pm = None
+                normalized = pd.to_datetime(dei["period_end"]).normalize()
+                df.at[i, "_period_end_date_html"] = normalized
+                pm = int(normalized.month)
             # FYE 月（若有）
             if dei.get("fye_month"):
                 df.at[i, "_fye_month_html"] = int(dei["fye_month"])
@@ -121,35 +140,35 @@ def step3_html_parse(df2: pd.DataFrame, ua: str, rate: float, no_progress: bool=
             pf = (dei.get("pf") or "").upper()
             if pf in {"Q1","Q2","Q3"} and pd.isna(df.at[i, "quarter"]):
                 df.at[i, "quarter"] = pf
-                # 若尚未有 FYE，且 DEI 有提供，保留 _fye_month_html（上面已放入）
-                time.sleep(max(rate, 0.0))
-                continue  # 已填季度，進下一列
+                # 後續仍可利用文本補 period/FYE
 
         # ---------- P1: 封面句抓 period_end ----------
-        dt = None
-        if html:
-            dt = probe_period(html_to_text(html))
-        if dt is None:
-            # fallback .txt header
-            dt = fetch_html_then_txt_period(url, headers)
-        if isinstance(dt, pd.Timestamp) and pd.notna(dt):
-            df.at[i, "_period_end_date_html"] = dt
-            pm = int(pd.to_datetime(dt).month)
-        else:
-            pm = None
+        if pd.isna(df.at[i, "_period_end_date_html"]):
+            dt = None
+            if html:
+                text_cache = html_to_text(html) if text_cache is None else text_cache
+                dt = probe_period(text_cache)
+            if dt is None:
+                # fallback .txt header
+                dt = fetch_html_then_txt_period(url, headers)
+            if isinstance(dt, pd.Timestamp) and pd.notna(dt):
+                normalized = pd.to_datetime(dt).normalize()
+                df.at[i, "_period_end_date_html"] = normalized
+                pm = int(normalized.month)
+        elif pm is None and pd.notna(df.at[i, "_period_end_date_html"]):
+            pm = int(pd.to_datetime(df.at[i, "_period_end_date_html"]).month)
 
         # ---------- P2/P3: FYE（as-of 句 / 標題視窗 / 文字句型） ----------
-        mm = None
-        if html:
-            tx = html_to_text(html)
+        if html and pd.isna(df.at[i, "_fye_month_html"]):
+            text_cache = html_to_text(html) if text_cache is None else text_cache
             # P1(as-of second date) → P2(標題視窗) → P3(文字句)
-            mm = probe_fye_from_balance_asof(tx, pm)
+            mm = probe_fye_from_balance_asof(text_cache, pm)
             if not mm:
-                mm = probe_fye_from_balance_window(tx, pm, window_lo=500, window_hi=1500)
+                mm = probe_fye_from_balance_window(text_cache, pm, window_lo=500, window_hi=1500)
             if not mm:
-                mm = probe_fye_from_text(tx, pm)
-        if mm:
-            df.at[i, "_fye_month_html"] = int(mm)
+                mm = probe_fye_from_text(text_cache, pm)
+            if mm:
+                df.at[i, "_fye_month_html"] = int(mm)
 
         time.sleep(max(rate, 0.0))
 
@@ -196,8 +215,43 @@ def step4_compute_quarter(df3: pd.DataFrame) -> pd.DataFrame:
 
 
 def finalize(original_df: pd.DataFrame, df_all: pd.DataFrame, out_path: str):
-    final = original_df.copy()
+    final = original_df.copy().reset_index(drop=True)
+    df_all = df_all.reset_index(drop=True)
+
     final["quarter"] = df_all["quarter"].values
+
+    period_series = (
+        pd.to_datetime(df_all["_period_end_date"], errors="coerce").dt.normalize()
+        if "_period_end_date" in df_all.columns
+        else pd.Series(pd.NaT, index=df_all.index, dtype="datetime64[ns]")
+    )
+    formatted_period = period_series.dt.strftime("%Y-%m-%d")
+    final["periodOfReport"] = formatted_period.fillna("")
+
+    if "_fye_month" in df_all.columns:
+        fye_month_series = pd.to_numeric(df_all["_fye_month"], errors="coerce").astype("Int64")
+    else:
+        fye_month_series = pd.Series(pd.NA, index=df_all.index, dtype="Int64")
+
+    if "_fye_date_api" in df_all.columns:
+        fye_date_series = pd.to_datetime(df_all["_fye_date_api"], errors="coerce").dt.normalize()
+    else:
+        fye_date_series = pd.Series(pd.NaT, index=df_all.index, dtype="datetime64[ns]")
+
+    def _format_fye_month(val) -> str:
+        if pd.isna(val):
+            return ""
+        try:
+            month = int(val)
+        except (TypeError, ValueError):
+            return ""
+        return f"{month:02d}" if 1 <= month <= 12 else ""
+
+    fye_mm = fye_month_series.apply(_format_fye_month)
+    fye_mmdd = fye_date_series.dt.strftime("%m/%d")
+    fye_out = fye_mmdd.where(fye_date_series.notna(), fye_mm)
+    final["fye"] = fye_out.fillna("")
+
     sort_col = None
     for column in ["company", "companyName", "conm", "name", "CompanyName", "issuer", "ticker"]:
         if column in final.columns:
