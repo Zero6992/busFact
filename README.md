@@ -30,7 +30,7 @@ Run the pipeline exactly as before:
 python main.py --bsq data/samples/BS_Q.csv --submap data/samples/sub_map.csv
 ```
 
-Generated CSVs will appear alongside `main.py` unless `--out-prefix` includes a path.
+Generated CSVs now land in `data/outputs/` with the shared prefix `bsq_quarter`.
 
 Development tips
 ----------------
