@@ -1,0 +1,3 @@
+*.csv
+achieve/
+__pycache__/
