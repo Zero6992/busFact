@@ -29,8 +29,49 @@ MONTH_ONLY_WORD = (
 MONTH_DAY_NOYEAR_RE = re.compile(rf"\b{MONTH_ONLY_WORD}\s+\d{{1,2}}(?:,)?\b", re.I)
 MONTH_ONLY_RE       = re.compile(rf"\b{MONTH_ONLY_WORD}\b", re.I)
 
+# e.g. "December 31"  ... (Unaudited) ...  "2010"
+SPLIT_DATE_RE = re.compile(
+    rf"\b(?P<mon>{MONTH_ONLY_WORD})\s+(?P<day>\d{{1,2}})\s*,?\s*"
+    rf"(?:\([^)]{{0,60}}\)\s*){{0,2}}(?:,?\s*)?"
+    rf"(?P<year>\d{{4}})\b",
+    re.I | re.S
+)
+
+def _extract_split_dates_from_block(block: str, limit: int = 12):
+    """把被斷行/插入括號的 'Month DD ... YYYY' 重新合併為完整日期"""
+    out = []
+    seen = set()
+    for m in SPLIT_DATE_RE.finditer(block):
+        ds = f"{m.group('mon')} {m.group('day')}, {m.group('year')}"
+        if ds in seen:
+            continue
+        seen.add(ds)
+        dt = pd.to_datetime(ds, errors="coerce")
+        if pd.notna(dt):
+            out.append((ds, pd.to_datetime(dt.date()), int(dt.month), m.span()))
+        if len(out) >= limit:
+            break
+    return out
+
 # ---- 已有：Assets 錨點（確保不是目錄）；記得不分大小寫 ----
 ASSETS_NEAR_RE = re.compile(r"\b(?:total\s+)?assets\b[:\s]?", re.I)
+
+STOP_HEAD_PATTS = [
+    re.compile(r"\b(CONSOLIDATED\s+)?STATEMENTS?\s+OF\s+OPERATIONS\b", re.I),
+    re.compile(r"\b(CONSOLIDATED\s+)?STATEMENTS?\s+OF\s+INCOME\b", re.I),
+    re.compile(r"\b(CONSOLIDATED\s+)?STATEMENTS?\s+OF\s+CASH\s+FLOWS\b", re.I),
+    re.compile(r"\b(CONSOLIDATED\s+)?STATEMENTS?\s+OF\s+(?:SHAREHOLDERS'|STOCKHOLDERS')?\s*EQUITY\b", re.I),
+    re.compile(r"\b(CONSOLIDATED\s+)?STATEMENTS?\s+OF\s+CHANGES\s+IN\s+(?:EQUITY|SHAREHOLDERS'|STOCKHOLDERS')\b", re.I),
+    re.compile(r"\bNOTES\s+TO\s+(?:CONDENSED\s+)?(?:CONSOLIDATED\s+)?FINANCIAL\s+STATEMENTS\b", re.I),
+]
+
+def _truncate_at_next_section(block: str) -> str:
+    cut = len(block)
+    for patt in STOP_HEAD_PATTS:
+        m = patt.search(block)
+        if m and m.start() < cut:
+            cut = m.start()
+    return block[:cut]
 
 # ---- 月名 → 月號 ----
 _MONTH_MAP = {
@@ -110,25 +151,32 @@ def _score_candidate(ds: str, dt: Optional[pd.Timestamp], m: int, pm: Optional[i
         score += 4.0
     return score
 
-def _extract_dates_from_block(block: str, limit: int = 12) -> List[Tuple[str, Optional[pd.Timestamp], Optional[int], Tuple[int,int]]]:
+def _extract_dates_from_block(block: str, limit: int = 16) -> List[Tuple[str, Optional[pd.Timestamp], Optional[int], Tuple[int,int]]]:
     """
-    回傳 [(raw_string, timestamp_or_None, month_or_None, (start,end))]
-    - 支援 DATE_ANY 與 --MM-DD（沒有年份）
+    回傳 [(raw, dt|None, month|None, (s,e))]
+    先合併斷行日期，再跑一般 DATE_ANY 掃描與 --MM-DD。
     """
-    out = []
-    seen = set()
+    out: List[Tuple[str, Optional[pd.Timestamp], Optional[int], Tuple[int, int]]] = []
+    seen_spans: List[Tuple[int, int]] = []
+
+    merged = _extract_split_dates_from_block(block, limit=limit)
+    out.extend(merged)
+    seen_spans.extend([sp for _, _, _, sp in merged])
+
     for m in DATE_ANY_OR_MD_RE.finditer(block):
-        ds = m.group(0).strip()
-        if ds in seen: 
+        s, e = m.span()
+        if any(not (e <= ss or s >= ee) for (ss, ee) in seen_spans):
             continue
-        seen.add(ds)
+
+        ds = m.group(0).strip()
         if re.fullmatch(DATE_MD_DASH, ds):
             mm = _mm_from_dash_md(ds)
-            out.append((ds, None, mm, m.span()))
+            out.append((ds, None, mm, (s, e)))
         else:
             dt = pd.to_datetime(ds, errors="coerce")
             if pd.notna(dt):
-                out.append((ds, pd.to_datetime(dt.date()), dt.month, m.span()))
+                out.append((ds, pd.to_datetime(dt.date()), dt.month, (s, e)))
+
         if len(out) >= limit:
             break
     return out
@@ -157,9 +205,7 @@ def probe_period(text: str) -> Optional[pd.Timestamp]:
 def month_in_near_set(candidate_m: int, period_m: Optional[int]) -> bool:
     if not period_m or pd.isna(period_m):
         return False
-    period_int = int(period_m)
-    near = {(period_int - 2) % 12 + 1, period_int, period_int % 12 + 1}
-    return int(candidate_m) in near
+    return int(candidate_m) in _near_months_set(period_m)
 
 
 def probe_fye_from_balance_asof(text: str, period_month: Optional[int]) -> Optional[int]:
@@ -199,11 +245,12 @@ def probe_fye_from_balance_window(
         if not ASSETS_NEAR_RE.search(gate_block):
             continue
 
-        block = text[start:start + window_hi]
+        block_raw = text[start:start + window_hi]
+        block = _truncate_at_next_section(block_raw)
 
         # 先試 as-of 句型（Balance Sheets / SOFP / Condition）
         asof = None
-        for _re in pat.ASOF_PATTERNS:
+        for _re in (pat.BAL_ASOF_RE, pat.SOFP_ASOF_RE, pat.COND_ASOF_RE, pat.SAL_ASOF_RE):
             m = _re.search(block)
             if m:
                 asof = m
