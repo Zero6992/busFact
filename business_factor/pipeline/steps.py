@@ -27,14 +27,14 @@ from business_factor.utils.progress import tqdm
 
 def effective_period_month(period_dt: pd.Timestamp, cutoff: int = 10) -> Optional[int]:
     """
-    對於 13 週季末落在月初幾天（例：7/3、7/5）時，把有效月份往前挪一個月。
-    cutoff=10 表示 1~10 日都視為上個月。
+    Shift the effective month backward when a 13-week quarter ends within the first few days.
+    cutoff=10 treats days 1-10 as belonging to the prior month.
     """
     if period_dt is None or pd.isna(period_dt):
         return None
     period_dt = pd.to_datetime(period_dt)
     if period_dt.day <= cutoff:
-        # 減去 cutoff 天再取月份，避免 1~10 號都落在同月
+        # Move back cutoff days before taking the month to avoid days 1-10 staying in the same month
         return int((period_dt - pd.Timedelta(days=cutoff)).month)
     return int(period_dt.month)
 
@@ -131,7 +131,7 @@ def step3_html_parse(df2: pd.DataFrame, ua: str, rate: float, no_progress: bool=
     df = df2.copy()
     url_col = detect_url_column(df)
     headers = {"User-Agent": ua, "Accept-Encoding":"gzip, deflate", "Connection":"keep-alive"}
-    # 欄位初始化
+    # Initialize derived columns
     if "_period_end_date_html" not in df.columns:
         df["_period_end_date_html"] = pd.NaT
     if "_fye_month_html" not in df.columns:
@@ -143,7 +143,7 @@ def step3_html_parse(df2: pd.DataFrame, ua: str, rate: float, no_progress: bool=
     else:
         period_missing = df["_period_end_date_html"].isna()
 
-    # 需要補抓 HTML 的情境：缺季、缺期末日、或 API 也沒給 FYE 月
+    # Rows that still need HTML parsing: missing quarter, period end, or FYE month
     html_fye_missing = df["_fye_month_html"].isna()
     if "_fye_month_api" in df.columns:
         api_fye_missing = df["_fye_month_api"].isna()
@@ -160,29 +160,29 @@ def step3_html_parse(df2: pd.DataFrame, ua: str, rate: float, no_progress: bool=
         if not url:
             continue
 
-        # 取 HTML 原文一次，避免重覆抓
+        # Fetch the HTML once to avoid duplicate requests
         pm: Optional[int] = None
         text_cache: Optional[str] = None
         html, _ = fetch_text(url, headers)
 
-        # ---------- P0: Inline XBRL DEI（最高優先） ----------
+        # ---------- P0: Inline XBRL DEI (highest priority) ----------
         if html:
             dei = extract_dei_from_html(html)
-            # period_end（若有）
+            # period_end when available
             if isinstance(dei.get("period_end"), pd.Timestamp) and pd.notna(dei["period_end"]):
                 normalized = pd.to_datetime(dei["period_end"]).normalize()
                 df.at[i, "_period_end_date_html"] = normalized
                 pm = int(normalized.month)
-            # FYE 月（若有）
+            # FYE month when available
             if dei.get("fye_month"):
                 df.at[i, "_fye_month_html"] = int(dei["fye_month"])
-            # 直接可用的 Quarter（若 pf ∈ Q1~Q3）
+            # Quarter value when pf is Q1-Q3
             pf = (dei.get("pf") or "").upper()
             if pf in {"Q1","Q2","Q3"} and pd.isna(df.at[i, "quarter"]):
                 df.at[i, "quarter"] = pf
-                # 後續仍可利用文本補 period/FYE
+                # Later steps can still refine period/FYE through text
 
-        # ---------- P1: 封面句抓 period_end ----------
+        # ---------- P1: cover sentence for period_end ----------
         if pd.isna(df.at[i, "_period_end_date_html"]):
             dt = None
             if html:
@@ -198,10 +198,10 @@ def step3_html_parse(df2: pd.DataFrame, ua: str, rate: float, no_progress: bool=
         elif pm is None and pd.notna(df.at[i, "_period_end_date_html"]):
             pm = int(pd.to_datetime(df.at[i, "_period_end_date_html"]).month)
 
-        # ---------- P2/P3: FYE（as-of 句 / 標題視窗 / 文字句型） ----------
+        # ---------- P2/P3: FYE (as-of sentence / window / textual pattern) ----------
         if html and pd.isna(df.at[i, "_fye_month_html"]):
             text_cache = html_to_text(html) if text_cache is None else text_cache
-            # P1(as-of second date) → P2(標題視窗) → P3(文字句)
+            # Priority: as-of second date -> window patterns -> text phrases
             mm = probe_fye_from_balance_asof(text_cache, pm)
             if not mm:
                 mm = probe_fye_from_balance_window(text_cache, pm, window_lo=500, window_hi=1500)
@@ -258,7 +258,7 @@ def step4_compute_quarter(df3: pd.DataFrame) -> pd.DataFrame:
         for idx in iterator:
             pdt = pd.to_datetime(df.at[idx, "_period_end_date"])
             fm  = int(df.at[idx, "_fye_month"])
-            pm  = effective_period_month(pdt, cutoff=10)  # ← 這行是關鍵
+            pm  = effective_period_month(pdt, cutoff=10)  # critical adjustment for early-month period ends
             quarter = quarter_from(pm, fm)
             if quarter:
                 df.at[idx, "quarter"] = quarter

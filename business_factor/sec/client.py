@@ -16,21 +16,18 @@ try:
 except Exception:
     requests = None  # type: ignore[assignment]
 
-# 會重試的 HTTP 狀態碼
+# HTTP status codes that trigger a retry
 RETRYABLE_STATUS = {429, 403, 503, 500, 502, 504}
 
-# 全域統計（本階段所有請求的最終結果）
+# Aggregate outcomes for this phase
 _STATUS_COUNTS: Counter = Counter()
 
 def status_counts(reset: bool = False) -> Dict[str, int]:
-    """
-    回傳目前累計的狀態碼統計（字典），如果 reset=True 則在回傳後清空。
-    Key 可能是整數字串（'200','429'...）或 'EXC'（發生例外）。
-    """
+    """Return the accumulated status counts; reset when requested."""
     out = dict(_STATUS_COUNTS)
     if reset:
         _STATUS_COUNTS.clear()
-    # 轉成字串鍵，避免下游序列化/顯示時混型別
+    # Convert keys to strings to keep downstream serialization uniform
     return {str(k): int(v) for k, v in out.items()}
 
 def _bump(code: Optional[int]) -> None:
@@ -40,7 +37,7 @@ def _bump(code: Optional[int]) -> None:
         _STATUS_COUNTS[str(code)] += 1
 
 def _sleep_with_jitter(base_wait: float) -> None:
-    # 固定 30s + 0~5s 抖動
+    # Sleep for base_wait plus up to 5 seconds of jitter
     time.sleep(base_wait + random.uniform(0, 5))
 
 def _request_with_retry(url: str,
@@ -48,10 +45,7 @@ def _request_with_retry(url: str,
                         timeout: int = TIMEOUT,
                         max_retries: int = 5,
                         base_wait: float = 30.0):
-    """
-    發出 GET，針對 429/403/503/5xx 做最多 max_retries 次重試，每次等 base_wait 秒。
-    回傳 (response 或 None, status_code 或 None)；把「最終結果」記入全域統計。
-    """
+    """Issue a GET with retries and record the final outcome."""
     if requests is None:
         _bump(None)
         return None, None
@@ -65,17 +59,17 @@ def _request_with_retry(url: str,
             code = resp.status_code
             last_resp, last_code = resp, code
 
-            # 成功
+            # Success
             if code == 200 and resp.text:
                 _bump(200)
                 return resp, 200
 
-            # 不可重試 → 紀錄後返回
+            # Non-retryable -> record and return
             if code not in RETRYABLE_STATUS:
                 _bump(code)
                 return resp, code
 
-            # 可重試 → 等待再試
+            # Retryable -> wait and try again
             if attempt < max_retries - 1:
                 _sleep_with_jitter(base_wait)
 
@@ -84,7 +78,7 @@ def _request_with_retry(url: str,
             if attempt < max_retries - 1:
                 _sleep_with_jitter(base_wait)
 
-    # 全數失敗（或最後仍非 200）
+    # Exhausted retries (or never reached 200)
     _bump(last_code)
     return last_resp, last_code
 

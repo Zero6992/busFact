@@ -16,14 +16,12 @@ def main(in_path, out_path=None, inplace=False):
     else:
         out_path = in_path
 
-    # 讀檔
     df = pd.read_csv(in_path, low_memory=False)
 
     if "quarter" not in df.columns:
         raise SystemExit(f"找不到欄位 'quarter'。可用欄位：{list(df.columns)}")
 
     q = df["quarter"]
-    # quarter 為 NaN 或去除前後空白後為空字串 -> 視為空值
     mask_empty = q.isna() | q.astype(str).str.strip().eq("")
 
     kept = df[mask_empty]

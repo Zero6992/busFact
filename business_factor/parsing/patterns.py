@@ -26,20 +26,20 @@ COVER_RE = re.compile(
     re.I | re.X,
 )
 
-# —— 可重用：允許的小括號片段（如 "(unaudited)", "(in thousands)" 等）
+# Reusable optional parenthetical fragments (e.g., "(unaudited)", "(in thousands)")
 PAREN_OPT = r"(?:\s*\([^)]{0,80}\))?"
 
-# ===== “as of A and B” 句型 =====
+# ===== "as of A and B" pattern =====
 BAL_ASOF_RE = re.compile(
     rf"""
     \b(?:condensed\s+)?(?:consolidated\s+)?balance\s+sheets?
-    {PAREN_OPT}\s*                               # 標題後可有 (unaudited)
+    {PAREN_OPT}\s*                               # optional "(unaudited)" immediately after the heading
     (?:as\s+(?:of|at)|as\s+of|as\s+at)\s+
     (?P<d1>{DATE_ANY})
-    {PAREN_OPT}\s*                               # 允許出現在第一個日期之後 ← 關鍵修正
+    {PAREN_OPT}\s*                               # allow parentheses after the first date
     (?:,)?\s*(?:and|,?\s*and)\s*
     (?P<d2>{DATE_ANY})
-    {PAREN_OPT}?                                 # 偶爾也會跟在第二個日期之後
+    {PAREN_OPT}?                                 # sometimes present after the second date
     """,
     re.I | re.X,
 )
@@ -93,7 +93,7 @@ TOKENS = ["CONSOLIDATED","CONDENSED","BALANCE","SHEETS",
           "STATEMENTS","FINANCIAL","POSITION","CONDITION",
           "ASSETS","LIABILITIES"]
 
-# ===== 標題樣式（大寫優先）=====
+# ===== Heading patterns (uppercase first) =====
 UPPER_HEAD_PATTS = [
     # Balance Sheets
     re.compile(r"\bCONDENSED\s+CONSOLIDATED\s+BALANCE\s+SHEETS?\b"),
@@ -121,7 +121,7 @@ UPPER_HEAD_PATTS = [
     re.compile(r"\bSTATEMENTS?\s+OF\s+ASSETS?\s+(?:AND|&)\s+LIABILITIES\b"),
 ]
 
-# Title Case / 小寫
+# Title Case / lowercase
 MIX_HEAD_PATTS = [
     # Balance Sheets
     re.compile(r"\bCondensed\s+Consolidated\s+Balance\s+Sheets?\b"),
@@ -155,7 +155,7 @@ ANCHOR_UPPER_PATTS = [
     re.compile(r"\b(CONSOLIDATED|CONDENSED)\b.{0,100}\bSTATEMENTS?\s+OF\s+(?:FINANCIAL\s+)?CONDITION\b", re.S),
 ]
 
-# NEW: 通用 fallback（大小寫不敏感）
+# Generic fallback (case-insensitive)
 GENERIC_HEAD_PATTS = [
     re.compile(r"\b(?:condensed\s+)?(?:consolidated\s+)?balance\s+sheets?\b", re.I),
     re.compile(r"\b(?:condensed\s+)?(?:consolidated\s+)?statements?\s+of\s+financial\s+position\b", re.I),
@@ -195,7 +195,7 @@ def iter_balance_sheet_headings(text: str) -> List[re.Match]:
                 continue
             candidates.append((_heading_score(s, False, False), match))
 
-    # NEW: 如果以上都撈不到，再用通用 fallback（分數較低）
+    # Fallback: use generic patterns if nothing matched above
     if not candidates:
         for patt in GENERIC_HEAD_PATTS:
             for match in patt.finditer(text):
@@ -242,7 +242,7 @@ __all__ = [
 ]
 
 # ===== Inline XBRL DEI (P0) =====
-IX_TAG = r"ix:(?:nonNumeric|nonnumeric)"  # 容忍大小寫
+IX_TAG = r"ix:(?:nonNumeric|nonnumeric)"  # tolerate case variations
 DEI_PF_RE = re.compile(
     rf"<{IX_TAG}[^>]*\bname\s*=\s*['\"]dei:DocumentFiscalPeriodFocus['\"][^>]*>\s*(Q[1-4]|FY)\s*</{IX_TAG}>",
     re.I | re.S,
@@ -251,12 +251,12 @@ DEI_YF_RE = re.compile(
     rf"<{IX_TAG}[^>]*\bname\s*=\s*['\"]dei:DocumentFiscalYearFocus['\"][^>]*>\s*(\d{{4}})\s*</{IX_TAG}>",
     re.I | re.S,
 )
-# 允許 12/31 或 --12-31 / -12-31
+# Allow 12/31 or --12-31 / -12-31
 DEI_FYE_RE = re.compile(
     rf"<{IX_TAG}[^>]*\bname\s*=\s*['\"]dei:CurrentFiscalYearEndDate['\"][^>]*>\s*(\d{{1,2}}/\d{{1,2}}|--?\d{{2}}-\d{{2}})\s*</{IX_TAG}>",
     re.I | re.S,
 )
-# 可選：直接取期間截止日
+# Optional: grab the period end date directly
 DEI_DPE_RE = re.compile(
     rf"<{IX_TAG}[^>]*\bname\s*=\s*['\"]dei:DocumentPeriodEndDate['\"][^>]*>\s*(\d{{4}}-\d{{2}}-\d{{2}}|\d{{1,2}}/\d{{1,2}}/\d{{2,4}})\s*</{IX_TAG}>",
     re.I | re.S,
@@ -271,7 +271,7 @@ def _parse_mm_from_fye_text(s: str) -> Optional[int]:
     if m:
         mm = int(m.group(1))
         return mm if 1 <= mm <= 12 else None
-    # --12-31 或 -12-31
+    # --12-31 or -12-31
     m = re.match(r"^\s*-{1,2}(\d{2})-\d{2}\s*$", s)
     if m:
         mm = int(m.group(1))
@@ -279,11 +279,11 @@ def _parse_mm_from_fye_text(s: str) -> Optional[int]:
     return None
 
 def extract_dei_from_html(html: str) -> dict:
-    """回傳 {'pf': 'Q1|Q2|Q3|Q4|FY' or None, 'yf': int|None, 'fye_month': int|None, 'period_end': Timestamp|None}"""
+    """Return {'pf': 'Q1|Q2|Q3|Q4|FY' or None, 'yf': int|None, 'fye_month': int|None, 'period_end': Timestamp|None}."""
     out = {"pf": None, "yf": None, "fye_month": None, "period_end": None}
     if not html:
         return out
-    # 直接對 HTML 原文找 <ix:nonNumeric ...>
+    # Scan the raw HTML for <ix:nonNumeric ...>
     m = DEI_PF_RE.search(html)
     if m:
         out["pf"] = m.group(1).upper()

@@ -89,7 +89,7 @@ def main(csv1: Path, csv2: Path, max_show: int):
     df1, has_ticker1 = load_and_normalize(csv1)
     df2, has_ticker2 = load_and_normalize(csv2)
 
-    # 1) 各檔內部檢查
+    # Step 1: internal consistency check
     inc1 = find_internal_inconsistency(df1)
     inc2 = find_internal_inconsistency(df2)
 
@@ -112,7 +112,7 @@ def main(csv1: Path, csv2: Path, max_show: int):
         if len(inc2) > max_show:
             print(f"...（僅顯示前 {max_show} 列）")
 
-    # 2) 檔案之間比對
+    # Step 2: cross-file comparison
     a1 = agg_by_filedAt(df1, "1")
     a2 = agg_by_filedAt(df2, "2")
     merged = a1.merge(a2, on="filedAt_norm", how="outer", indicator=True)
@@ -124,7 +124,7 @@ def main(csv1: Path, csv2: Path, max_show: int):
     only1 = merged[merged["_merge"] == "left_only"][["filedAt_norm", "quarters_1", "tickers_1"]]
     only2 = merged[merged["_merge"] == "right_only"][["filedAt_norm", "quarters_2", "tickers_2"]]
 
-    # 3) 摘要
+    # Step 3: summary
     print_section("2) 兩檔比對摘要（依 filedAt）")
     summary_rows = [
         ("兩檔皆有的 filedAt", len(both)),
@@ -136,7 +136,7 @@ def main(csv1: Path, csv2: Path, max_show: int):
     summary_df = pd.DataFrame(summary_rows, columns=["項目", "筆數"])
     print(summary_df.to_string(index=False))
 
-    # 4) 詳細差異（含 ticker）
+    # Step 4: detailed differences (including ticker)
     if not diff_rows.empty:
         print_section(f"3) quarter 不同的 filedAt（最多顯示 {max_show} 列）")
         to_show = diff_rows.sort_values("filedAt_norm").head(max_show)
@@ -167,7 +167,7 @@ def main(csv1: Path, csv2: Path, max_show: int):
         if len(only2) > max_show:
             print(f"...（僅顯示前 {max_show} 列）")
 
-    # 5) 結論
+    # Step 5: conclusion
     print_section("6) 結論")
     ok_internal = inc1.empty and inc2.empty
     ok_interfile = len(diff_rows) == 0

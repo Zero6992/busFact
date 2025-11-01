@@ -159,12 +159,12 @@ def build_fye_map(dfq: pd.DataFrame, headers: Dict[str, str], sleep: float) -> p
 
     out["fye_month_api"] = pd.to_datetime(out["fye_date"], errors="coerce").dt.month
 
-    # === 取得本階段 HTTP 狀態碼統計，印出並寫入末列 ===
-    stats = status_counts(reset=True)  # 取出並清空計數器（讓下一階段重新累計）
-    # 印在 stdout
+    # Fetch the HTTP status summary for this phase and write it to the output
+    stats = status_counts(reset=True)  # grab counts and reset for the next stage
+    # Print to stdout
     print("[FYE API] HTTP status summary:", stats)
 
-    # 加一列，第一欄標記，最後一欄寫入統計字串
+    # Append a marker row whose last column stores the status summary
     if not out.empty:
         last_col = out.columns[-1]
         row = {c: "" for c in out.columns}
@@ -172,7 +172,7 @@ def build_fye_map(dfq: pd.DataFrame, headers: Dict[str, str], sleep: float) -> p
         row[last_col] = "; ".join([f"{k}:{v}" for k, v in sorted(stats.items())]) if stats else "N/A"
         out = pd.concat([out, pd.DataFrame([row])], ignore_index=True)
     else:
-        # 即使 out 空，也回傳帶有統計的單列（保持「最後一欄寫統計」規格）
+        # Even with no data, return a single row carrying the status summary
         cols = ["cik10", "fyear", "fye_date", "form", "filed", "accn", "source", "fye_month_api"]
         out = pd.DataFrame([{c: "" for c in cols}])
         out.loc[0, cols[0]] = "__HTTP_STATUS__"

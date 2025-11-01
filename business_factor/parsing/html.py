@@ -15,13 +15,13 @@ from business_factor.parsing import patterns as pat
 from business_factor.sec.client import fetch_text
 from business_factor.utils.text import replace_nbsp, strip_page_tokens
 
-# 放在檔頭或常數區（不動你的 DATE_ANY；這是補充用）
-DATE_MD_DASH = r"--?\d{2}-\d{2}"   # --12-31 或 -12-31
+# Additional helper constants; DATE_ANY stays untouched
+DATE_MD_DASH = r"--?\d{2}-\d{2}"   # --12-31 or -12-31
 DATE_ANY_OR_MD = rf"(?:{DATE_ANY}|{DATE_MD_DASH})"
 
 DATE_ANY_OR_MD_RE = re.compile(DATE_ANY_OR_MD)
 
-# ---- 新增：Month Day（無年份）與 Month-only 的候補正則 ----
+# ---- Month-day (no year) and month-only fallback patterns ----
 MONTH_ONLY_WORD = (
     r"(Jan(?:\.|uary)?|Feb(?:\.|ruary)?|Mar(?:\.|ch)?|Apr(?:\.|il)?|May|Jun(?:\.|e)?|"
     r"Jul(?:\.|y)?|Aug(?:\.|ust)?|Sep(?:\.|t\.|tember)?|Oct(?:\.|ober)?|Nov(?:\.|ember)?|"
@@ -39,7 +39,7 @@ SPLIT_DATE_RE = re.compile(
 )
 
 def _extract_split_dates_from_block(block: str, limit: int = 12):
-    """把被斷行/插入括號的 'Month DD ... YYYY' 重新合併為完整日期"""
+    """Reassemble split 'Month DD ... YYYY' sequences into full dates."""
     out = []
     seen = set()
     for m in SPLIT_DATE_RE.finditer(block):
@@ -54,7 +54,7 @@ def _extract_split_dates_from_block(block: str, limit: int = 12):
             break
     return out
 
-# ---- 已有：Assets 錨點（確保不是目錄）；記得不分大小寫 ----
+# ---- Assets anchor (avoid table of contents; case-insensitive) ----
 ASSETS_NEAR_RE = re.compile(r"\b(?:total\s+)?assets\b[:\s]?", re.I)
 
 STOP_HEAD_PATTS = [
@@ -74,7 +74,7 @@ def _truncate_at_next_section(block: str) -> str:
             cut = m.start()
     return block[:cut]
 
-# ---- 月名 → 月號 ----
+# ---- Month name to month number ----
 _MONTH_MAP = {
     "jan":1,"jan.":1,"january":1,
     "feb":2,"feb.":2,"february":2,
@@ -111,12 +111,12 @@ def _score_candidate_month_only(mm: int, period_month: Optional[int], ctx: str) 
     score = 0.0
     if period_month:
         dist = _month_distance(period_month, mm)
-        # 偏好 3/6/9 月距（常見 FYE 與季末關係）
+        # Prefer gaps of 3/6/9 months (common FYE offsets)
         if dist in {3,6,9}: score += 6.0
         elif dist >= 2:     score += 3.0
-        # 遠離 ±1 再加分
+        # Extra points when distance is not +/-1 month
         if dist not in {0,1,11}: score += 2.0
-    # 若上下文有 fiscal year / year end 字樣，加分
+    # Bonus when the context mentions fiscal year or year end
     if re.search(r"\b(fiscal\s+year|year[-\s]*end(?:ed)?)\b", ctx, flags=re.I):
         score += 4.0
     return score
@@ -129,33 +129,33 @@ def _mm_from_dash_md(s: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 def _month_distance(pm: int, m: int) -> int:
-    # 0..11 的圓環距離
+    # Circular distance within 0..11
     return (m - pm) % 12
 
 def _score_candidate(ds: str, dt: Optional[pd.Timestamp], m: int, pm: Optional[int], ctx: str) -> float:
     score = 0.0
-    # 1) 距離分數：偏好 3/6/9 月距（Q1/Q2/Q3 常見）
+    # 1) Distance score: prefer 3/6/9 month gaps (typical for Q1/Q2/Q3)
     if pm:
         dist = _month_distance(pm, m)
         if dist in {3,6,9}:
             score += 6.0
         elif dist >= 2:
             score += 3.0
-        # 遠離 ±1 的再加分
+        # Add a bonus when not within +/-1 month
         if dist not in {0,1,11}:
             score += 2.0
-    # 2) 月底日加分
+    # 2) Month-end bonus
     if isinstance(dt, pd.Timestamp) and dt.day in {28,29,30,31}:
         score += 1.0
-    # 3) 上下文關鍵詞
+    # 3) Context keywords
     if FY_PHRASE_RE.search(ctx):
         score += 4.0
     return score
 
 def _extract_dates_from_block(block: str, limit: int = 16) -> List[Tuple[str, Optional[pd.Timestamp], Optional[int], Tuple[int,int]]]:
     """
-    回傳 [(raw, dt|None, month|None, (s,e))]
-    先合併斷行日期，再跑一般 DATE_ANY 掃描與 --MM-DD。
+    Return [(raw, dt|None, month|None, (start, end))].
+    Merge split dates first, then scan for DATE_ANY matches and --MM-DD tokens.
     """
     out: List[Tuple[str, Optional[pd.Timestamp], Optional[int], Tuple[int, int]]] = []
     seen_spans: List[Tuple[int, int]] = []
@@ -229,20 +229,13 @@ def probe_fye_from_balance_window(
     window_lo: int = 500,
     window_hi: int = 2500
 ) -> Optional[int]:
-    """
-    改良版：
-      1) 先找最像標題的候選，但必須通過「表格就緒」門檻（附近要看到 Assets）
-      2) 在標題後視窗抓多種日期（含 --MM-DD）
-      3) 先試 as-of 句型（Balance Sheets / SOFP / Condition）→ 第二個日期若非 period ±1 月 → 採用
-      4) 否則對候選日期打分，挑最高分（同分以出現位置較前者勝）
-      5) 仍無解 → 最後候補用「只靠月份」從標題區域抓月
-    """
+    """Scan balance sheet windows for FYE month using layered fallbacks."""
     bad_near = _near_months_set(period_month)
 
     for head in pat.iter_balance_sheet_headings(text):
         start = head.end()
 
-        # 表格就緒門檻：避免抓到目錄
+        # Require nearby assets marker to avoid table-of-contents hits
         gate_block = text[start:start + max(window_lo, 800)]
         if not ASSETS_NEAR_RE.search(gate_block):
             continue
@@ -250,7 +243,7 @@ def probe_fye_from_balance_window(
         block_raw = text[start:start + window_hi]
         block = _truncate_at_next_section(block_raw)
 
-        # 先試 as-of 句型（Balance Sheets / SOFP / Condition）
+        # First try as-of patterns (Balance Sheets / SOFP / Condition)
         asof = None
         for _re in (pat.BAL_ASOF_RE, pat.SOFP_ASOF_RE, pat.COND_ASOF_RE, pat.SAL_ASOF_RE):
             m = _re.search(block)
@@ -270,7 +263,7 @@ def probe_fye_from_balance_window(
             if len(cand) == 1:
                 return cand[0][0]
             if len(cand) == 2:
-                # 兩個都合格 → 用打分挑一個
+                # Both valid -> score them to decide
                 scored = []
                 for mm, dt in cand:
                     scored.append((
@@ -280,7 +273,7 @@ def probe_fye_from_balance_window(
                 scored.sort(reverse=True)
                 return scored[0][1]
 
-        # 泛化掃描（含 --MM-DD）
+        # Generic scan (including --MM-DD)
         items = _extract_dates_from_block(block, limit=16)
         cands = []
         for raw, dt, mm, span in items:
@@ -291,15 +284,15 @@ def probe_fye_from_balance_window(
             s, e = span
             ctx = block[max(0, s-60): min(len(block), e+60)]
             score = _score_candidate(raw, dt, mm, period_month, ctx)
-            # 帶上出現位置，供同分排序
+            # Carry position to break ties
             cands.append((score, s, mm))
 
         if cands:
-            # 先比分數，再比出現位置（越前越好）
+            # Sort by score first, then prefer earlier positions
             cands.sort(key=lambda x: (-x[0], x[1]))
             return cands[0][2]
 
-    # --- 最後候補：只有月份（月份/年份分行或沒有年份時） ---
+    # --- Final fallback: month-only (handles split month/year cases) ---
     mm_last = _fallback_month_only_from_balance_block(
         text, period_month, window_lo=500, window_hi=2500
     )
@@ -374,20 +367,13 @@ def fetch_html_fye_month(
 
 def _fallback_month_only_from_balance_block(text: str, period_month: Optional[int],
                                             window_lo: int = 500, window_hi: int = 2500) -> Optional[int]:
-    """
-    最後候補：
-      - 有偵測到 Balance Sheets / SOFP / Condition 標題
-      - 標題後視窗近處含 'Assets'（避免抓到目錄）
-      - 視窗內擷取 'Month Day'（無年份）與單獨 'Month' 作為候選
-      - 排除 period_end 月份的 ±1 月
-      - 用打分（距離 / fiscal year 關鍵詞）選一個月作為 FYE 月
-    """
+    """Fallback that scores month signals near balance sheet headings."""
     bad_near = _near_months_set(period_month)
 
     for head in pat.iter_balance_sheet_headings(text):
         start = head.end()
 
-        # 先做「表格就緒」門檻（避免目錄）
+        # Enforce the assets gate to avoid table-of-contents matches
         gate_block = text[start:start + max(window_lo, 800)]
         if not ASSETS_NEAR_RE.search(gate_block):
             continue
@@ -396,7 +382,7 @@ def _fallback_month_only_from_balance_block(text: str, period_month: Optional[in
 
         candidates: List[Tuple[float, int, int]] = []  # (score, month, pos)
 
-        # 1) Month Day（無年份），e.g., "March 31"、"December 31"
+        # 1) Month Day (no year), e.g., "March 31", "December 31"
         for m in MONTH_DAY_NOYEAR_RE.finditer(block):
             mon_name = m.group(1)
             mm = _mon_word_to_num(mon_name)
@@ -409,7 +395,7 @@ def _fallback_month_only_from_balance_block(text: str, period_month: Optional[in
             score = _score_candidate_month_only(mm, period_month, ctx)
             candidates.append((score, mm, s))
 
-        # 2) 若 1) 沒抓到任何東西，再退到 Month-only（更弱）
+        # 2) If the first pass yields nothing, fall back to month-only (weaker)
         if not candidates:
             for m in MONTH_ONLY_RE.finditer(block):
                 mon_name = m.group(1)
@@ -420,19 +406,19 @@ def _fallback_month_only_from_balance_block(text: str, period_month: Optional[in
                     continue
                 s, e = m.span()
                 ctx = block[max(0, s-60): min(len(block), e+60)]
-                score = _score_candidate_month_only(mm, period_month, ctx) - 1.0  # 更弱，稍微扣分
+                score = _score_candidate_month_only(mm, period_month, ctx) - 1.0  # weaker, apply a small penalty
                 candidates.append((score, mm, s))
 
         if not candidates:
             continue
 
-        # 去重（同一月份重複出現，只取分數最高、最靠前）
+        # Deduplicate by month, keeping the highest score and earliest position
         best_by_month: Dict[int, Tuple[float, int]] = {}
         for sc, mm, pos in candidates:
             if (mm not in best_by_month) or (sc > best_by_month[mm][0]) or (sc == best_by_month[mm][0] and pos < best_by_month[mm][1]):
                 best_by_month[mm] = (sc, pos)
 
-        # 依分數排序；同分取位置較前
+        # Sort by score with earlier positions breaking ties
         final = sorted([(sc, mm, pos) for mm, (sc, pos) in best_by_month.items()],
                        key=lambda x: (-x[0], x[2]))
         return final[0][1]
