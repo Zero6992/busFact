@@ -13,6 +13,7 @@ import pandas as pd
 from business_factor.config import DATE_ANY
 from business_factor.parsing import patterns as pat
 from business_factor.sec.client import fetch_text
+from business_factor.utils.text import replace_nbsp, strip_page_tokens
 
 # 放在檔頭或常數區（不動你的 DATE_ANY；這是補充用）
 DATE_MD_DASH = r"--?\d{2}-\d{2}"   # --12-31 或 -12-31
@@ -183,11 +184,12 @@ def _extract_dates_from_block(block: str, limit: int = 16) -> List[Tuple[str, Op
 
 
 def html_to_text(html: str) -> str:
-    text = pyhtml.unescape(html).replace("\xa0", " ")
+    text = replace_nbsp(pyhtml.unescape(html))
     text = re.sub(r"<!--.*?-->", " ", text, flags=re.S)
     text = re.sub(r"<script\b[^>]*>.*?</script>", " ", text, flags=re.I | re.S)
     text = re.sub(r"<style\b[^>]*>.*?</style>", " ", text, flags=re.I | re.S)
     text = re.sub(r"<[^>]+>", " ", text)
+    text = strip_page_tokens(text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
