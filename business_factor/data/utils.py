@@ -60,9 +60,11 @@ def accession_from_url(url: str) -> Optional[str]:
 
 
 def canon_url(url: str) -> str:
-    value = (url or "").strip()
-    if not value:
-        return value
+    if url is None or (isinstance(url, float) and pd.isna(url)):
+        return ""
+    value = str(url).strip() if not isinstance(url, str) else url.strip()
+    if not value or value.lower() == "nan":
+        return ""
     value = value.replace("\xa0", " ").replace("&nbsp;", " ")
     value = re.sub(r"^https?://www\.sec\.gov/ix\?doc=", "https://www.sec.gov", value, flags=re.I)
     return value

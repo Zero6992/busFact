@@ -12,6 +12,14 @@ from .steps import (
     finalize,
     stats_and_save,
 )
+from .section1a import (
+    PATTERN_GROUPS,
+    get_clean_1a_text,
+    count_keywords,
+    count_words,
+    enrich_with_section_1a,
+    deduplicate_quarters,
+)
 
 __all__ = [
     "stats_row",
@@ -23,4 +31,10 @@ __all__ = [
     "step4_compute_quarter",
     "finalize",
     "stats_and_save",
+    "PATTERN_GROUPS",
+    "get_clean_1a_text",
+    "count_keywords",
+    "count_words",
+    "enrich_with_section_1a",
+    "deduplicate_quarters",
 ]

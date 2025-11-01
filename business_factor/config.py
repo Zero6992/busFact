@@ -4,7 +4,7 @@
 Core configuration constants shared across the Business Factor pipeline.
 """
 
-UA_DEFAULT = "Mozilla/5.0 (compatible; add-quarter-v6/6.0; +mailto:you@example.com)"
+UA_DEFAULT = "MegaTsai (jordan890522@gmail.com)"
 TIMEOUT = 30
 SLEEP = 0.20
 

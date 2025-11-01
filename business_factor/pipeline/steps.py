@@ -53,6 +53,45 @@ def choose_sort_col(df: pd.DataFrame) -> Optional[str]:
     return "ticker" if "ticker" in df.columns else None
 
 
+def ensure_fyear_column(df: pd.DataFrame) -> None:
+    """
+    Ensure df has a nullable Int64 'fyear' column by inferring from existing fields.
+    """
+    if "fyear" in df.columns:
+        fyear = pd.to_numeric(df["fyear"], errors="coerce").astype("Int64")
+    else:
+        fyear = pd.Series(pd.NA, index=df.index, dtype="Int64")
+
+    numeric_candidates = ["fy", "fiscalYear", "fiscal_year"]
+    for column in numeric_candidates:
+        if column in df.columns:
+            years = pd.to_numeric(df[column], errors="coerce").astype("Int64")
+            if years.notna().any():
+                fyear = fyear.fillna(years)
+
+    date_candidates = [
+        "periodOfReport",
+        "period_of_report",
+        "PeriodOfReport",
+        "_period_end_date_sub",
+        "_period_end_date_html",
+        "filedAt",
+        "filed_at",
+        "filed",
+        "filedDate",
+        "filingDate",
+        "reportDate",
+    ]
+    for column in date_candidates:
+        if column in df.columns:
+            dt = pd.to_datetime(df[column], errors="coerce")
+            if dt.notna().any():
+                years = dt.dt.year.astype("Int64")
+                fyear = fyear.fillna(years)
+
+    df["fyear"] = fyear
+
+
 def step1_sub(original_df: pd.DataFrame, sub_path: str) -> pd.DataFrame:
     df = original_df.copy()
     url_col = detect_url_column(df)
@@ -66,6 +105,7 @@ def step1_sub(original_df: pd.DataFrame, sub_path: str) -> pd.DataFrame:
     merged = df.merge(sub[["adsh", "fp", "period"]], left_on="_adsh_nodash", right_on="adsh", how="left")
     df["quarter"] = merged["fp"].map(FP_TO_Q)
     df["_period_end_date_sub"] = pd.to_datetime(merged["period"], format="%Y%m%d", errors="coerce")
+    ensure_fyear_column(df)
     return df
 
 
@@ -183,7 +223,20 @@ def quarter_from(period_month: int, fye_month: int) -> Optional[str]:
 
 def step4_compute_quarter(df3: pd.DataFrame) -> pd.DataFrame:
     df = df3.copy()
-    df["_period_end_date"] = df["_period_end_date_sub"].fillna(df["_period_end_date_html"])
+    bsq_period = (
+        pd.to_datetime(df["periodOfReport"], errors="coerce").dt.normalize()
+        if "periodOfReport" in df.columns
+        else pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
+    )
+    sub_period = (
+        df["_period_end_date_sub"] if "_period_end_date_sub" in df.columns else pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
+    )
+    html_period = (
+        df["_period_end_date_html"] if "_period_end_date_html" in df.columns else pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
+    )
+    df["_period_end_date"] = (
+        bsq_period.fillna(sub_period).fillna(html_period)
+    )
 
     def choose_fye_month(row: pd.Series):
         pm = None
@@ -217,6 +270,9 @@ def step4_compute_quarter(df3: pd.DataFrame) -> pd.DataFrame:
 def finalize(original_df: pd.DataFrame, df_all: pd.DataFrame, out_path: str):
     final = original_df.copy().reset_index(drop=True)
     df_all = df_all.reset_index(drop=True)
+
+    if "fyear" in df_all.columns:
+        final["fyear"] = pd.to_numeric(df_all["fyear"], errors="coerce").astype("Int64")
 
     final["quarter"] = df_all["quarter"].values
 
