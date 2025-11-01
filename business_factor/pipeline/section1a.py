@@ -18,6 +18,7 @@ from business_factor.config import SLEEP, UA_DEFAULT
 from business_factor.data import canon_url, detect_url_column
 from business_factor.sec.client import fetch_text
 from business_factor.utils.progress import tqdm
+from business_factor.utils.text import replace_nbsp, strip_page_tokens
 
 LOGGER = logging.getLogger(__name__)
 
@@ -129,10 +130,13 @@ ITEM_SECTION_RE = re.compile(
     re.I | re.S | re.X,
 )
 
-PAGE_TOKEN_RE = re.compile(
-    r"(?:<PAGE>|\#\#PAGE|Page\s*\d+(?:\s*of\s*\d+)?|\d+\s*PAGE)", re.IGNORECASE
-)
 TRAILING_NUMBER_RE = re.compile(r"\s\d+$")
+RISK_PHRASE_RE = re.compile(r"risk\s+factor", re.I)
+TRAILING_SECTION_PATTERNS = [
+    re.compile(r"\bPART\s+I\.\s+FINANCIAL\s+INFORMATION\b", re.I),
+    re.compile(r"\bPART\s+II\.\s+OTHER\s+INFORMATION\b", re.I),
+]
+TABLE_OF_CONTENTS_RE = re.compile(r"\b\d*\s*Table of Contents\b", re.I)
 
 
 def _soup_to_text(html: str) -> str:
@@ -146,7 +150,7 @@ def _soup_to_text(html: str) -> str:
 
 
 def _normalize_spaces(text: str) -> str:
-    text = text.replace("\xa0", " ")
+    text = replace_nbsp(text)
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
@@ -159,18 +163,52 @@ def _extract_item_1a(text: str) -> Optional[str]:
     matches = list(ITEM_SECTION_RE.finditer(norm))
     if not matches:
         return None
-    # Prefer the longest match to avoid selecting table-of-contents snippets.
-    longest = max(matches, key=lambda m: len(m.group("body")))
-    section = longest.group("body").strip()
-    if not section:
+
+    bad_header_chars = {",", ")", "("}
+
+    def _score(match: re.Match) -> Optional[tuple[int, int, int]]:
+        body = match.group("body") or ""
+        body = body.strip()
+        if not body:
+            return None
+        header = match.group("header") or ""
+        header = header.strip()
+        has_risk = bool(RISK_PHRASE_RE.search(header)) or bool(RISK_PHRASE_RE.search(body[:512]))
+        clean_header = 0 if any(ch in header for ch in bad_header_chars) else 1
+        return (1 if has_risk else 0, clean_header, len(body))
+
+    scored: list[tuple[tuple[int, int, int], re.Match]] = []
+    for match in matches:
+        score = _score(match)
+        if score is not None:
+            scored.append((score, match))
+    if not scored:
         return None
+    best = max(scored, key=lambda item: item[0])[1]
+    section = best.group("body").strip()
+    section = _trim_trailing_sections(section)
+    return section or None
+
+
+def _trim_trailing_sections(section: str) -> str:
+    if not section:
+        return section
+    cutoff = len(section)
+    for pattern in TRAILING_SECTION_PATTERNS:
+        match = pattern.search(section)
+        if match and match.start() > 100:
+            cutoff = min(cutoff, match.start())
+    if cutoff != len(section):
+        section = section[:cutoff].rstrip()
     return section
 
 
 def _clean_section_text(text: str) -> Optional[str]:
     if not text:
         return None
-    cleaned = PAGE_TOKEN_RE.sub(" ", text)
+    cleaned = replace_nbsp(text)
+    cleaned = strip_page_tokens(cleaned)
+    cleaned = TABLE_OF_CONTENTS_RE.sub(" ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     cleaned = TRAILING_NUMBER_RE.sub("", cleaned).strip()
     return cleaned or None
@@ -178,11 +216,7 @@ def _clean_section_text(text: str) -> Optional[str]:
 
 def get_clean_1a_text(filing_url: str, headers: Optional[Dict[str, str]] = None) -> Optional[str]:
     """
-    Fetch filing content and return cleaned textual content.
-
-    Historically this function extracted only the Item 1A section.
-    It now returns the entire filing text so keyword counts cover the
-    full document.
+    Fetch filing content and return cleaned textual content for Item 1A only.
     """
     if not isinstance(filing_url, str):
         return None
@@ -211,7 +245,8 @@ def get_clean_1a_text(filing_url: str, headers: Optional[Dict[str, str]] = None)
         LOGGER.exception("Failed to parse HTML for %s", url)
         return None
 
-    return _clean_section_text(raw_text)
+    section_text = _extract_item_1a(raw_text)
+    return _clean_section_text(section_text)
 
 
 def count_keywords(text: Optional[str]) -> Dict[str, int]:
