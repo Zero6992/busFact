@@ -9,8 +9,16 @@
 ```bash
 python -m venv .venv
 source .venv/bin/activate        # On Windows use: .venv\Scripts\activate
-pip install pandas requests beautifulsoup4 tqdm
+pip install pandas requests beautifulsoup4 tqdm sec-api
 ```
+
+Add your SEC Extractor API key to a `.env` file in the project root:
+
+```bash
+echo "SEC_API_KEY=your_sec_api_key_here" >> .env
+```
+
+The `SEC_API_KEY` is required to retrieve Item 1A word counts via the SEC API.
 
 ### Step 1 – Determine quarters
 Run the pipeline entry point with your filings CSV plus the submission map. The command below produces `data/outputs/bsq_quarter.final.csv` together with intermediate checkpoints.
@@ -25,7 +33,7 @@ Key flags:
 - `--max-rows` – optional cap for smoke tests.
 
 ### Step 2 – Enrich Item 1A
-Feed the quarter CSV into the Item 1A enricher. It fetches the risk section, counts strategy keywords, computes total words, and deduplicates repeated filings.
+Feed the quarter CSV into the Item 1A enricher. It drops rows that lack a `ticker`, fetches the risk section via the SEC Extractor API (same source for keywords and word counts), computes totals, deduplicates repeated filings, and sorts the final CSV alphabetically by `ticker` (when present).
 
 ```bash
 python3 scripts/enrich_item1a.py --input data/outputs/bsq_quarter.final.csv

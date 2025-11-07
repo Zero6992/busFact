@@ -7,12 +7,19 @@ Section 1A extraction and keyword counting utilities.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from typing import Dict, Iterable, Optional
+from pathlib import Path
 
 import pandas as pd
 from bs4 import BeautifulSoup, Comment
+
+try:
+    from sec_api import ExtractorApi
+except Exception:
+    ExtractorApi = None  # type: ignore[assignment]
 
 from business_factor.config import SLEEP, UA_DEFAULT
 from business_factor.data import canon_url, detect_url_column
@@ -137,6 +144,104 @@ TRAILING_SECTION_PATTERNS = [
     re.compile(r"\bPART\s+II\.\s+OTHER\s+INFORMATION\b", re.I),
 ]
 TABLE_OF_CONTENTS_RE = re.compile(r"\b\d*\s*Table of Contents\b", re.I)
+ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+SEC_API_KEY_ENV = "SEC_API_KEY"
+
+_ENV_LOADED = False
+_SEC_API_KEY_WARNED = False
+_EXTRACTOR: Optional[ExtractorApi] = None
+_EXTRACTOR_INIT_FAILED = False
+
+
+def _ensure_env_loaded(path: Path = ENV_PATH) -> None:
+    global _ENV_LOADED
+    if _ENV_LOADED:
+        return
+    _ENV_LOADED = True
+    if not path.exists():
+        return
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if (
+                    len(value) >= 2
+                    and value[0] == value[-1]
+                    and value[0] in {"'", '"'}
+                ):
+                    value = value[1:-1]
+                if key and key not in os.environ:
+                    os.environ[key] = value
+    except OSError:
+        LOGGER.warning("Unable to read environment file at %s", path)
+
+
+def _get_sec_api_key() -> Optional[str]:
+    global _SEC_API_KEY_WARNED
+    _ensure_env_loaded()
+    key = os.environ.get(SEC_API_KEY_ENV, "").strip()
+    if key:
+        return key
+    if not _SEC_API_KEY_WARNED:
+        LOGGER.warning(
+            "Missing SEC_API_KEY; SEC Extractor API word counts are disabled."
+        )
+        _SEC_API_KEY_WARNED = True
+    return None
+
+
+def _get_extractor() -> Optional[ExtractorApi]:
+    global _EXTRACTOR, _EXTRACTOR_INIT_FAILED
+    if _EXTRACTOR is not None:
+        return _EXTRACTOR
+    if _EXTRACTOR_INIT_FAILED:
+        return None
+    if ExtractorApi is None:
+        LOGGER.warning(
+            "Package 'sec-api' is not installed; SEC Extractor API cannot be used."
+        )
+        _EXTRACTOR_INIT_FAILED = True
+        return None
+    api_key = _get_sec_api_key()
+    if not api_key:
+        _EXTRACTOR_INIT_FAILED = True
+        return None
+    try:
+        _EXTRACTOR = ExtractorApi(api_key)
+    except Exception:
+        LOGGER.exception("Failed to initialize SEC Extractor API.")
+        _EXTRACTOR_INIT_FAILED = True
+        return None
+    return _EXTRACTOR
+
+
+def _fetch_section_1a_via_sec_api(url: str, lowered: Optional[str] = None) -> Optional[str]:
+    extractor = _get_extractor()
+    if extractor is None:
+        return None
+
+    lowered = (lowered or url).lower().strip()
+    if not lowered.endswith((".htm", ".html", ".txt")):
+        return None
+
+    fmt = "html" if lowered.endswith((".htm", ".html")) else "text"
+    try:
+        section = extractor.get_section(url, "part2item1a", fmt)
+    except Exception:
+        LOGGER.exception("SEC Extractor API failed for %s", url)
+        return None
+
+    if not section:
+        return None
+
+    if fmt == "html":
+        section = _soup_to_text(section)
+    return section
 
 
 def _soup_to_text(html: str) -> str:
@@ -216,20 +321,24 @@ def _clean_section_text(text: str) -> Optional[str]:
 
 def get_clean_1a_text(filing_url: str, headers: Optional[Dict[str, str]] = None) -> Optional[str]:
     """
-    Fetch filing content and return cleaned textual content for Item 1A only.
+    Fetch Item 1A text via the SEC Extractor API (preferred) with a legacy fallback.
     """
     if not isinstance(filing_url, str):
         return None
+    url = canon_url(filing_url)
+    lowered = url.lower().strip()
+    if not lowered.endswith((".htm", ".html", ".txt")):
+        return None
+
+    section_text = _fetch_section_1a_via_sec_api(url, lowered)
+    if section_text:
+        return _clean_section_text(section_text)
+
     headers = headers or {
         "User-Agent": UA_DEFAULT,
         "Accept-Encoding": "gzip, deflate",
         "Connection": "keep-alive",
     }
-
-    url = canon_url(filing_url)
-    lowered = url.lower().strip()
-    if not lowered.endswith((".htm", ".html", ".txt")):
-        return None
 
     html, status = fetch_text(url, headers)
     if not html:

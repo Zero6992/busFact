@@ -8,8 +8,16 @@
 ```bash
 python -m venv .venv
 source .venv/bin/activate        # Windows 請改用 .venv\Scripts\activate
-pip install pandas requests beautifulsoup4 tqdm
+pip install pandas requests beautifulsoup4 tqdm sec-api
 ```
+
+在專案根目錄建立 `.env` 檔並寫入你的 SEC Extractor API 金鑰：
+
+```bash
+echo "SEC_API_KEY=你的SEC_API金鑰" >> .env
+```
+
+`SEC_API_KEY` 會用來透過 SEC API 擷取 Item 1A 文字以計算字數。
 
 ### 第一步：判斷季度和FYE
 以 `main.py` 為入口，輸入申報清單及對應表，程式會在 `data/outputs/` 產生 `bsq_quarter.final.csv` 附上`fye`和`quarters`欄位
@@ -25,7 +33,7 @@ python3 main.py --bsq data/samples/BS_Q.csv --submap data/samples/sub_map.csv
 - `--max-rows`：可選，用於少量筆數測試。
 
 ### 第二步：計算 Item 1A 字數
-將第一步產出的季度 CSV 交給 `scripts/enrich_item1a.py`。此腳本會擷取風險因素章節、計算關鍵字以及字數，並針對同季度重複申報做去重。
+將第一步產出的季度 CSV 交給 `scripts/enrich_item1a.py`。此腳本會先刪除沒有 `ticker` 的列，透過 SEC Extractor API 擷取風險因素章節（關鍵字與字數使用同一份來源），計算關鍵字與字數，針對同季度重複申報做去重，並在輸出時依 `ticker` 英文字母排序（若有該欄位）。
 
 ```bash
 python3 scripts/enrich_item1a.py --input data/outputs/bsq_quarter.final.csv

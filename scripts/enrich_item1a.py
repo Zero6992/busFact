@@ -80,6 +80,18 @@ def main() -> None:
     if args.max_rows is not None:
         df = df.head(args.max_rows)
 
+    if "ticker" in df.columns:
+        ticker_series = df["ticker"].astype("string")
+        ticker_trimmed = ticker_series.str.strip()
+        mask = ticker_trimmed.notna() & ticker_trimmed.ne("")
+        dropped = int(len(df) - mask.sum())
+        df = df.loc[mask].copy()
+        df["ticker"] = ticker_trimmed.loc[df.index]
+        if dropped > 0:
+            logging.info("Dropped %d rows with empty ticker before enrichment.", dropped)
+    else:
+        logging.warning("Input missing 'ticker' column; cannot drop blank tickers.")
+
     enriched = enrich_with_section_1a(
         df,
         user_agent=UA_DEFAULT,
@@ -98,6 +110,23 @@ def main() -> None:
 
     if not args.keep_text and "section_1a_text" in enriched.columns:
         enriched = enriched.drop(columns=["section_1a_text"])
+
+    if "ticker" in enriched.columns:
+        ticker_sort = (
+            enriched["ticker"]
+            .astype("string")
+            .str.strip()
+            .fillna("")
+            .str.upper()
+        )
+        enriched = (
+            enriched.assign(_ticker_sort=ticker_sort)
+            .sort_values("_ticker_sort", kind="mergesort")
+            .drop(columns=["_ticker_sort"])
+            .reset_index(drop=True)
+        )
+    else:
+        logging.warning("Column 'ticker' not found; output will keep existing order.")
 
     ensure_dir(str(args.output))
     enriched.to_csv(args.output, index=False)
