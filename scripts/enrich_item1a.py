@@ -56,6 +56,12 @@ def parse_args() -> argparse.Namespace:
         help="Process only the first N rows (for debugging).",
     )
     parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help="Maximum parallel SEC requests when --rate is 0 (default: auto, capped at 8).",
+    )
+    parser.add_argument(
         "--log-level",
         type=str,
         default="INFO",
@@ -98,6 +104,7 @@ def main() -> None:
         rate=args.rate,
         keep_text=args.keep_text,
         no_progress=args.no_progress,
+        max_workers=args.max_workers,
     )
 
     if not args.no_dedupe:

@@ -33,7 +33,7 @@ Key flags:
 - `--max-rows` – optional cap for smoke tests.
 
 ### Step 2 – Enrich Item 1A
-Feed the quarter CSV into the Item 1A enricher. It drops rows that lack a `ticker`, fetches the risk section via the SEC Extractor API (same source for keywords and word counts), computes totals, deduplicates repeated filings, and sorts the final CSV alphabetically by `ticker` (when present).
+Feed the quarter CSV into the Item 1A enricher. It drops rows that lack a `ticker`, fetches the risk section via the SEC Extractor API (same source for keywords and word counts), computes totals, deduplicates repeated filings, sorts the final CSV alphabetically by `ticker` (when present), and issues SEC requests concurrently whenever `--rate 0` (the default) to minimize wall-clock time.
 
 ```bash
 python3 scripts/enrich_item1a.py --input data/outputs/bsq_quarter.final.csv
@@ -41,6 +41,8 @@ python3 scripts/enrich_item1a.py --input data/outputs/bsq_quarter.final.csv
 
 Useful options:
 - `--output` – override the destination CSV (default `data/outputs/bsq_quarter.item1a.csv`).
+- `--rate` – seconds to sleep between requests; set `> 0` to force sequential throttling.
+- `--max-workers` – cap the number of parallel SEC requests when `--rate 0` (default auto, max 8).
 - `--max-rows` – run a quick check against the first N filings.
 - `--keep-text` – retain the raw Item 1A text in the output.
 - `--no-dedupe` – skip `(cik, fyear, quarter)` deduplication if you want every row.

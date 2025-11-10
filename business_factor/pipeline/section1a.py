@@ -10,8 +10,10 @@ import logging
 import os
 import re
 import time
-from typing import Dict, Iterable, Optional
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Lock
+from typing import Any, Dict, Iterable, Optional
 
 import pandas as pd
 from bs4 import BeautifulSoup, Comment
@@ -151,34 +153,41 @@ _ENV_LOADED = False
 _SEC_API_KEY_WARNED = False
 _EXTRACTOR: Optional[ExtractorApi] = None
 _EXTRACTOR_INIT_FAILED = False
+_ENV_LOCK = Lock()
 
 
 def _ensure_env_loaded(path: Path = ENV_PATH) -> None:
     global _ENV_LOADED
     if _ENV_LOADED:
         return
-    _ENV_LOADED = True
-    if not path.exists():
-        return
-    try:
-        with path.open("r", encoding="utf-8") as handle:
-            for raw_line in handle:
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip()
-                if (
-                    len(value) >= 2
-                    and value[0] == value[-1]
-                    and value[0] in {"'", '"'}
-                ):
-                    value = value[1:-1]
-                if key and key not in os.environ:
-                    os.environ[key] = value
-    except OSError:
-        LOGGER.warning("Unable to read environment file at %s", path)
+    with _ENV_LOCK:
+        if _ENV_LOADED:
+            return
+        if not path.exists():
+            _ENV_LOADED = True
+            return
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    key = key.strip()
+                    value = value.strip()
+                    if (
+                        len(value) >= 2
+                        and value[0] == value[-1]
+                        and value[0] in {"'", '"'}
+                    ):
+                        value = value[1:-1]
+                    existing = os.environ.get(key, "")
+                    if key and not existing.strip():
+                        os.environ[key] = value
+        except OSError:
+            LOGGER.warning("Unable to read environment file at %s", path)
+        finally:
+            _ENV_LOADED = True
 
 
 def _get_sec_api_key() -> Optional[str]:
@@ -232,8 +241,10 @@ def _fetch_section_1a_via_sec_api(url: str, lowered: Optional[str] = None) -> Op
     fmt = "html" if lowered.endswith((".htm", ".html")) else "text"
     try:
         section = extractor.get_section(url, "part2item1a", fmt)
-    except Exception:
+    except Exception as exc:
         LOGGER.exception("SEC Extractor API failed for %s", url)
+        if "429" in str(exc):
+            time.sleep(2.0)
         return None
 
     if not section:
@@ -376,6 +387,13 @@ def count_words(text: Optional[str]) -> int:
     return len(text.split())
 
 
+def _auto_worker_count(max_workers: Optional[int] = None) -> int:
+    if isinstance(max_workers, int) and max_workers > 0:
+        return max(1, max_workers)
+    cpu_count = os.cpu_count() or 4
+    return max(2, min(8, cpu_count))
+
+
 def enrich_with_section_1a(
     df: pd.DataFrame,
     *,
@@ -383,6 +401,7 @@ def enrich_with_section_1a(
     rate: float = SLEEP,
     keep_text: bool = False,
     no_progress: bool = False,
+    max_workers: Optional[int] = None,
 ) -> pd.DataFrame:
     """
     Fetch filing text, count keywords, and compute total words for each filing row.
@@ -405,9 +424,8 @@ def enrich_with_section_1a(
         data["section_1a_text"] = pd.NA
 
     indices = data.index.tolist()
-    iterator = tqdm(indices, desc="Item 1A", unit="row") if (tqdm and not no_progress) else indices
 
-    for pos, idx in enumerate(iterator):
+    def _process_index(idx: Any) -> tuple[Any, Dict[str, int], int, Optional[str]]:
         url = data.at[idx, url_col]
         text = None
         if isinstance(url, str) and url.strip():
@@ -416,18 +434,36 @@ def enrich_with_section_1a(
             except Exception:
                 LOGGER.exception("Error while processing %s", url)
                 text = None
-            if rate and pos < len(indices) - 1:
-                time.sleep(rate)
-
         counts = count_keywords(text)
+        words = count_words(text)
+        text_value = text if keep_text else None
+        return idx, counts, words, text_value
+
+    def _apply_result(idx: Any, counts: Dict[str, int], words: int, text_value: Optional[str]) -> None:
         for col, value in counts.items():
             data.at[idx, col] = int(value)
-
-        words = count_words(text)
         data.at[idx, "total_words"] = int(words)
-
         if keep_text:
-            data.at[idx, "section_1a_text"] = text
+            data.at[idx, "section_1a_text"] = text_value
+
+    total = len(indices)
+    if rate and rate > 0:
+        iterator = tqdm(indices, desc="Item 1A", unit="row") if (tqdm and not no_progress) else indices
+        for pos, idx in enumerate(iterator):
+            idx, counts, words, text_value = _process_index(idx)
+            _apply_result(idx, counts, words, text_value)
+            if rate and pos < total - 1:
+                time.sleep(rate)
+    else:
+        workers = _auto_worker_count(max_workers)
+        progress = tqdm(total=total, desc="Item 1A", unit="row") if (tqdm and not no_progress) else None
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            for idx, counts, words, text_value in executor.map(_process_index, indices):
+                _apply_result(idx, counts, words, text_value)
+                if progress:
+                    progress.update(1)
+        if progress:
+            progress.close()
 
     return data
 

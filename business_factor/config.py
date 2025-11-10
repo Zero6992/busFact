@@ -6,7 +6,7 @@ Core configuration constants shared across the Business Factor pipeline.
 
 UA_DEFAULT = "MegaTsai (jordan890522@gmail.com)"
 TIMEOUT = 30
-SLEEP = 0.20
+SLEEP = 0.0
 
 FP_TO_Q = {"Q1": "Q1", "Q2": "Q2", "Q3": "Q3", "H1": "Q2", "M9": "Q3"}
 
