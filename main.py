@@ -3,18 +3,12 @@
 
 import argparse
 from pathlib import Path
-import sys
 
 import pandas as pd
 
-BASE_DIR = Path(__file__).resolve().parent
-SRC_DIR = BASE_DIR / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
-
-from busfactor.config import SLEEP, UA_DEFAULT
-from busfactor.data import ensure_dir
-from busfactor.pipeline import (
+from src.config import SLEEP, UA_DEFAULT
+from src.data import ensure_dir
+from src.pipeline import (
     finalize,
     stats_and_save,
     step1_sub,
@@ -23,6 +17,7 @@ from busfactor.pipeline import (
     step4_compute_quarter,
 )
 
+BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE_DIR / "data" / "outputs"
 OUTPUT_PREFIX = OUTPUT_DIR / "bsq_quarter"
 

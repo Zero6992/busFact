@@ -22,9 +22,9 @@ The `SEC_API_KEY` is required to retrieve Item 1A word counts via the SEC API.
 
 ### Project layout
 ```
-src/busfactor/   Core pipeline modules and shared helpers.
-scripts/         CLI utilities (enrichment, data quality tools, etc.).
-data/            Workspace for inputs/outputs (ignored by git).
+src/      Core pipeline modules and shared helpers.
+scripts/  CLI utilities (enrichment, data quality tools, etc.).
+data/     Workspace for inputs/outputs (ignored by git).
 ```
 
 ### Step 1 – Determine quarters

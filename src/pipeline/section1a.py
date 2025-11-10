@@ -23,11 +23,11 @@ try:
 except Exception:
     ExtractorApi = None  # type: ignore[assignment]
 
-from busfactor.config import SLEEP, UA_DEFAULT
-from busfactor.data import canon_url, detect_url_column
-from busfactor.sec.client import fetch_text
-from busfactor.utils.progress import tqdm
-from busfactor.utils.text import replace_nbsp, strip_page_tokens
+from src.config import SLEEP, UA_DEFAULT
+from src.data import canon_url, detect_url_column
+from src.sec.client import fetch_text
+from src.utils.progress import tqdm
+from src.utils.text import replace_nbsp, strip_page_tokens
 
 LOGGER = logging.getLogger(__name__)
 

@@ -10,14 +10,12 @@ import sys
 import pandas as pd
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-SRC_DIR = ROOT_DIR / "src"
-for path in (SRC_DIR, ROOT_DIR):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-from busfactor.config import SLEEP, UA_DEFAULT
-from busfactor.data import ensure_dir
-from busfactor.pipeline import (
+from src.config import SLEEP, UA_DEFAULT
+from src.data import ensure_dir
+from src.pipeline import (
     PATTERN_GROUPS,
     enrich_with_section_1a,
     deduplicate_quarters,

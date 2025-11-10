@@ -9,7 +9,7 @@ from typing import List, Tuple, Optional
 
 import pandas as pd
 
-from busfactor.config import DATE_ANY
+from src.config import DATE_ANY
 
 COVER_RE = re.compile(
     rf"""

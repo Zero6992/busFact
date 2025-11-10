@@ -21,9 +21,9 @@ echo "SEC_API_KEY=你的SEC_API金鑰" >> .env
 
 ### 專案結構
 ```
-src/busfactor/   核心流程與共用模組。
-scripts/         指令列工具與資料檢查腳本。
-data/            輸入與輸出工作區（不納入 git）。
+src/      核心流程與共用模組。
+scripts/  指令列工具與資料檢查腳本。
+data/     輸入與輸出工作區（不納入 git）。
 ```
 
 ### 第一步：判斷季度和FYE

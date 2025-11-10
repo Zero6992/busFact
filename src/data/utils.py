@@ -10,8 +10,8 @@ from typing import Optional
 
 import pandas as pd
 
-from busfactor.config import MONTH_MAP
-from busfactor.parsing.patterns import ACCESSION_FOLDER_RE
+from src.config import MONTH_MAP
+from src.parsing.patterns import ACCESSION_FOLDER_RE
 
 
 def ensure_dir(path: str):

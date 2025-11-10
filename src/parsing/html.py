@@ -10,10 +10,10 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from busfactor.config import DATE_ANY
-from busfactor.parsing import patterns as pat
-from busfactor.sec.client import fetch_text
-from busfactor.utils.text import replace_nbsp, strip_page_tokens
+from src.config import DATE_ANY
+from src.parsing import patterns as pat
+from src.sec.client import fetch_text
+from src.utils.text import replace_nbsp, strip_page_tokens
 
 # Additional helper constants; DATE_ANY stays untouched
 DATE_MD_DASH = r"--?\d{2}-\d{2}"   # --12-31 or -12-31

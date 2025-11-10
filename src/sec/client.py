@@ -9,7 +9,7 @@ import time
 from collections import Counter
 from typing import Any, Dict, Optional, Tuple
 
-from busfactor.config import TIMEOUT
+from src.config import TIMEOUT
 
 try:
     import requests
