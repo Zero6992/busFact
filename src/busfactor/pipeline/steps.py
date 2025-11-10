@@ -9,9 +9,9 @@ from typing import Optional, Tuple
 
 import pandas as pd
 
-from business_factor.config import FP_TO_Q
-from business_factor.data import accession_from_url, canon_url, detect_url_column
-from business_factor.parsing import (
+from busfactor.config import FP_TO_Q
+from busfactor.data import accession_from_url, canon_url, detect_url_column
+from busfactor.parsing import (
     extract_dei_from_html,
     fetch_html_then_txt_period,
     html_to_text,
@@ -20,9 +20,9 @@ from business_factor.parsing import (
     probe_fye_from_text,
     probe_period,
 )
-from business_factor.sec.api import build_fye_map, pad_cik
-from business_factor.sec.client import fetch_text
-from business_factor.utils.progress import tqdm
+from busfactor.sec.api import build_fye_map, pad_cik
+from busfactor.sec.client import fetch_text
+from busfactor.utils.progress import tqdm
 
 
 def effective_period_month(period_dt: pd.Timestamp, cutoff: int = 10) -> Optional[int]:

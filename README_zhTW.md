@@ -19,6 +19,13 @@ echo "SEC_API_KEY=你的SEC_API金鑰" >> .env
 
 `SEC_API_KEY` 會用來透過 SEC API 擷取 Item 1A 文字以計算字數。
 
+### 專案結構
+```
+src/busfactor/   核心流程與共用模組。
+scripts/         指令列工具與資料檢查腳本。
+data/            輸入與輸出工作區（不納入 git）。
+```
+
 ### 第一步：判斷季度和FYE
 以 `main.py` 為入口，輸入申報清單及對應表，程式會在 `data/outputs/` 產生 `bsq_quarter.final.csv` 附上`fye`和`quarters`欄位
 
@@ -50,9 +57,4 @@ python3 scripts/enrich_item1a.py --input data/outputs/bsq_quarter.final.csv
 ### 快速測試
 ```bash
 python3 scripts/enrich_item1a.py --input data/samples/BS_Q_test.csv --max-rows 5
-```
-
-### 執行回歸測試
-```bash
-pytest tests/test_section1a.py
 ```

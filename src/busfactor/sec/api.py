@@ -9,8 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from business_factor.config import ANNUAL_FORMS_RAW
-from business_factor.utils.progress import tqdm
+from busfactor.config import ANNUAL_FORMS_RAW
+from busfactor.utils.progress import tqdm
 from .client import get_json, status_counts
 
 

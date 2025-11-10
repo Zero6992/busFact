@@ -20,6 +20,13 @@ echo "SEC_API_KEY=your_sec_api_key_here" >> .env
 
 The `SEC_API_KEY` is required to retrieve Item 1A word counts via the SEC API.
 
+### Project layout
+```
+src/busfactor/   Core pipeline modules and shared helpers.
+scripts/         CLI utilities (enrichment, data quality tools, etc.).
+data/            Workspace for inputs/outputs (ignored by git).
+```
+
 ### Step 1 – Determine quarters
 Run the pipeline entry point with your filings CSV plus the submission map. The command below produces `data/outputs/bsq_quarter.final.csv` together with intermediate checkpoints.
 
@@ -50,9 +57,4 @@ Useful options:
 ### Quick smoke test
 ```bash
 python3 scripts/enrich_item1a.py --input data/samples/BS_Q_test.csv --max-rows 5
-```
-
-### Run the regression test
-```bash
-pytest tests/test_section1a.py
 ```
