@@ -3,6 +3,7 @@
 - Python 3.12 以上
 - 可上網（需線上下載 SEC 申報文件）
 - 準備兩個 CSV：`BS_Q.csv`（申報清單）與 `sub_map.csv`（CIK 對應表）
+- `data/samples/BS_Q.sample.csv` 與 `data/samples/sub_map.sample.csv` 可作為欄位模板，確認檔案放置位置與欄位名稱後再換成正式資料
 
 ### 環境設定
 ```bash
@@ -16,6 +17,8 @@ pip install pandas requests beautifulsoup4 tqdm sec-api
 ```bash
 echo "SEC_API_KEY=你的SEC_API金鑰" >> .env
 ```
+
+或是複製 `.env.sample` 為 `.env`，再把範例值換成自己的金鑰；請把 `.env` 保留在專案根目錄方便程式載入環境變數。
 
 `SEC_API_KEY` 會用來透過 SEC API 擷取 Item 1A 文字以計算字數。
 

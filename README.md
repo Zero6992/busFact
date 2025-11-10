@@ -4,6 +4,7 @@
 - Python 3.12
 - Internet connection (SEC filings are downloaded on demand).
 - CSV inputs: `BS_Q.csv` (filings) and `sub_map.csv` (CIK-to-submission mapping). Sample files live under `data/samples/`.
+  - Use `data/samples/BS_Q.sample.csv` and `data/samples/sub_map.sample.csv` as templates to confirm the expected columns before dropping in your own data.
 
 ### Setup
 ```bash
@@ -17,6 +18,8 @@ Add your SEC Extractor API key to a `.env` file in the project root:
 ```bash
 echo "SEC_API_KEY=your_sec_api_key_here" >> .env
 ```
+
+You can also copy `.env.sample` to `.env` and replace the placeholder value; keep the `.env` file at the project root so scripts can load the key automatically.
 
 The `SEC_API_KEY` is required to retrieve Item 1A word counts via the SEC API.
 
