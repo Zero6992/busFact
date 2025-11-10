@@ -1,4 +1,6 @@
 *.csv
+# Keep curated reference samples under version control.
+!data/samples/*.sample.csv
 __pycache__/
 .env
 .pytest_cache
